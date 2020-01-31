@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/stylesheets/style.css">
+  </head>
+
+  <body>
+    <div id="app">
+      <input type="text" v-model.trim="keywords" @keydown.enter="entry">
+      <input type="number" v-model.trim="current">
+      <button @click="download">确认下载列表</button>
+      <button @click="deleteSongs">删除</button>
+      <button @click="downloadAll">下载</button>
+      <button @click="getPlayList">me歌单列表</button>
+      <h2>搜索结果</h2>
+      <table>
+        <tr>
+          <th><input type="checkbox" @change="selectAll"></th>
+          <th>名字</th>
+          <th>歌手</th>
+          <th>专辑</th>
+          <th>时长</th>
+          <th></th>
+        </tr>
+        <tr v-for="(item, index) in songList" :key="index">
+          <td><input type="checkbox" v-model="item.selected">{{current}}-{{index}}</td>
+          <td>{{item.name}}</td>
+          <td>{{item.singer.map(item => item.name).join('/')}}</td>
+          <td>{{item.album.name}}</td>
+          <td>{{item.interval | DURATION}}</td>
+          <td>
+            <a href="javascript:;" @click="deleteSong(index)">删除</a>
+          </td>
+        </tr>
+      </table>
+      <h2>下载列表<button @click="downloadList = []">清空</button></h2>
+      <table>
+        <tr>
+          <th>ID</th>
+          <th>名字</th>
+          <th>歌手</th>
+          <th>专辑</th>
+          <th>时长</th>
+          <th></th>
+        </tr>
+        <tr v-for="(item, index) in downloadList" :key="index">
+          <td>{{item.mid}}</td>
+          <td>{{item.name}}</td>
+          <td>{{item.singer.map(item => item.name).join('/')}}</td>
+          <td>{{item.album.name}}</td>
+          <td>{{item.interval | DURATION}}</td>
+          <td style="width: 50px">
+            <a :href="`/api/download?fileUrl=${encodeURIComponent(item.fileUrl)}&fileName=${getFileName(item)}`">down</a>
+            <a href="javascript:;" @click="downloadList.splice(index, 1)">删除</a>
+          </td>
+        </tr>
+      </table>
+
+    </div>
+  
+    <script src="https://cdn.staticfile.org/vue/2.6.10/vue.min.js"></script>
+    <script src="https://cdn.staticfile.org/axios/0.19.2/axios.min.js"></script>
+    <script>
+      const app = new Vue({
+        data() {
+          return {
+            keywords: '',
+            songList: [],
+            downloadList: [],
+            playList: [],
+            current: 0
+          }
+        },
+        methods: {
+          toPage() {
+            const pageSize = 10;
+            let start = this.current * pageSize;
+            let end = (this.current * 1 + 1) * pageSize;
+
+            this.songList = this.playList.slice(start, end).map(item => Object.assign(item, {
+              selected: true
+            }))
+          },
+          getPlayList() {
+            axios.get('api/getPlayList').then(res => {
+              this.playList = res.data.cdlist[0].songlist;
+              this.toPage();
+            })
+          },
+          selectAll(e) {
+            this.songList.forEach(item => {
+              item.selected = e.target.checked;
+            })
+            this.$forceUpdate();
+          },
+          entry() {
+            axios.get('/api/getid/' + this.keywords).then(res => {
+              let songs = res.data.data.song.list;
+              this.songList = songs.map(item => Object.assign(item, { selected: false }));
+              this.keywords = '';
+            });
+          },
+          deleteSong(index) {
+            this.songList.splice(index, 1)
+          },
+          deleteSongs() {
+            this.songList = this.songList.filter(item => {
+              return !item.selected;
+            })
+          },
+          download() {
+            let newSongs = this.songList.filter(item => item.selected);
+            
+            let mids = newSongs.map(item => item.mid);
+            let mvs = newSongs.map(item => item.mv);
+
+            axios.post('/api/getMediaUrls', {
+              mids,
+              mvs
+            }).then(res => {
+              res.data.data.forEach((item, index) => {
+                newSongs[index].fileUrl = item[0];
+              });
+              this.downloadList = this.downloadList.concat(newSongs);
+              this.$forceUpdate();
+            });
+          },
+          getFileName(item) {
+            let i1 = item.fileUrl.indexOf('?');
+            let suffix = item.fileUrl.substring(0, i1);
+            let i2 = suffix.lastIndexOf('.');
+            suffix  = suffix.substring(i2, suffix.length);
+            
+            return item.name + ' - ' + item.singer.map(item => item.name).join('_') + suffix
+          },
+          downloadAll() {
+            let files = this.downloadList.map(item => {
+              return {
+                url: item.fileUrl,
+                name: this.getFileName(item)
+              }
+            });
+            axios.post('api/saveMedia', { files }).then(res => {
+              if(res.data.code === 0){
+                alert('success!');
+                this.downloadList = []
+              } else {
+                alert('fail!');
+                console.log(res);
+              }
+            })
+          }
+        },
+        watch: {
+          current(newVal) {
+            this.toPage();
+          }
+        },
+        filters: {
+          DURATION(value) {
+            let h = Math.floor(value / 60 / 60);
+            let m = Math.floor(value / 60) % 60;
+            let s = value % 60;
+            return `${h ? h.toString().padStart(2, '0') + ':' : ''}${m ? m.toString().padStart(2, '0') + ':' : '00:'}${s.toString().padStart(2, '0')}`
+          }
+        }
+      })
+      app.$mount('#app')
+
+      function _jsonp(url) {
+        return new Promise((resolve, reject) => {
+          jsonp(url, {}, function (err, data) {
+            resolve(data);
+          })
+        })
+      }
+    </script>
+  </body>
+
+</html>
